@@ -6,10 +6,12 @@
 #include "GameFramework/Character.h"
 #include "SCharacter.generated.h"
 
+class ASRifleWeapon;
+class ASWeapon;
+class ASWeaponPickup;
 class UCameraComponent;
 class UCameraShake;
 class USpringArmComponent;
-
 
 UCLASS()
 class DARKHOURS_API ASCharacter : public ACharacter
@@ -49,12 +51,17 @@ protected:
 	void AimStart();
 	void AimEnd();
 
+	void Interact();
+
 	// Camera input
 	void CameraX(float Value);
 	void CameraY(float Value);
 
 	// Calculates character movement direction
 	void CalculateCharacterMovementDirection(float InputX, float InputY);
+
+	// On interaction of primary weapon
+	void Interaction_PrimaryWeapon();
 
 	// Variables
 	// Ref to sprinting camera shake
@@ -64,6 +71,20 @@ protected:
 	// Ref to firing camera shake
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Camera)
 		TSubclassOf<UCameraShake> CamShake_FiringWeapon;
+
+	// Name of weapon draw sockets
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Weapon")
+		FName PrimaryDrawSocketName;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Weapon")
+		FName SecondaryDrawSocketName;
+
+	// Name of weapon holster sockets
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Weapon")
+		FName PrimaryHolsterSocketName;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Weapon")
+		FName SecondaryHolsterSocketName;
 
 	// Player controller - using ref of this character
 	APlayerController* PlayerController;
@@ -79,12 +100,29 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = Camera)
 		float FOVInterpSpeed;
 
+	// Ref to weapon pickup class that character potentially overlaps with
+	ASWeaponPickup* OverlappedWeaponPickup;
+
+	// Primary weapon of the weapon inventory
+	ASRifleWeapon* PrimaryWeapon;
+
+	// Secondary weapon of the weapon inventory
+	ASWeapon* SecondaryWeapon;
+
 public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+
+	// When character starts overlapping
+	UFUNCTION()
+		void OnStartOverlappingActors(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult & SweepResult);
+
+	// When characer stop overlapping
+	UFUNCTION()
+		void OnEndOverlappingActors(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
 
 	// Variables
 	// Character movement values
@@ -93,6 +131,9 @@ public:
 
 	UPROPERTY(BlueprintReadWrite)
 		float InputY;
+
+	UPROPERTY(BlueprintReadWrite)
+		float TurnX;
 
 	UPROPERTY(BlueprintReadWrite)
 		float MovementDirection;

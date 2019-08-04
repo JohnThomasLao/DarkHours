@@ -26,8 +26,10 @@ void USAnimInstance::UpdateAnimationProperties(float DeltaTime)
 		if (OwnerCharacter != NULL) {
 			// Update animation properties from owner character 
 			bIsSprinting = OwnerCharacter->bIsSprinting;
+			bIsAiming = OwnerCharacter->bIsAiming;
 			Anim_InputX = OwnerCharacter->InputX; // Set animation fwd / bwd
 			Anim_InputY = OwnerCharacter->InputY; // Set animation rgt / lft
+			Anim_TurnX = OwnerCharacter->TurnX; // Set animation turn lft / rgt
 
 			if (bIsSprinting) {
 				MovementSpeed = FMath::Clamp(UKismetMathLibrary::Abs(Anim_InputX) + UKismetMathLibrary::Abs(Anim_InputY), 0.f, 1.f) * 2.f; // Speed up twice

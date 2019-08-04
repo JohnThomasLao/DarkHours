@@ -26,6 +26,9 @@ protected:
 		float Anim_InputY;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+		float Anim_TurnX;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 		float MovementDirection;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
@@ -33,6 +36,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 		bool bIsFalling;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+		bool bIsAiming;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 		bool bIsCrouching;

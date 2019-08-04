@@ -1,11 +1,16 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "SCharacter.h"
+#include "SRifleWeapon.h"
+#include "SWeapon.h"
+#include "SWeaponPickup.h"
 #include "Camera/CameraComponent.h"
 #include "Camera/CameraShake.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/SphereComponent.h"
 #include "Engine/GameEngine.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -54,9 +59,17 @@ ASCharacter::ASCharacter()
 	CameraComp->SetupAttachment(SpringArmComp, USpringArmComponent::SocketName); // Attach camera component to the 'tail' of the spring arm component
 	CameraComp->bUsePawnControlRotation = false;
 
+	GetCapsuleComponent()->SetGenerateOverlapEvents(true);
+
 	// Variables
-	AimFOV = 30.f;
+	AimFOV = 20.f;
 	FOVInterpSpeed = 15.f;
+
+	PrimaryDrawSocketName = "PrimaryDrawSocket";
+	PrimaryHolsterSocketName = "PrimaryHolsterSocket";
+
+	PrimaryWeapon = NULL;
+	SecondaryWeapon = NULL;
 
 }
 
@@ -70,6 +83,9 @@ void ASCharacter::BeginPlay()
 
 	// Initialize charater default FOV
 	DefaultFOV = CameraComp->FieldOfView;
+
+	GetCapsuleComponent()->OnComponentBeginOverlap.AddDynamic(this, &ASCharacter::OnStartOverlappingActors);
+	GetCapsuleComponent()->OnComponentEndOverlap.AddDynamic(this, &ASCharacter::OnEndOverlappingActors);
 
 }
 
@@ -92,17 +108,19 @@ void ASCharacter::Tick(float DeltaTime)
 	CameraComp->SetFieldOfView(AimTargetFOV);
 
 	if (bIsAiming) {
-		SpringArmComp->SocketOffset = FVector(0.f, 50.f, 10.f); // Move camera a bit to the right
+		SpringArmComp->SocketOffset = FVector(0.f, 80.f, 15.f); // Move camera a bit to the right
 		SpringArmComp->bEnableCameraLag = false;
 		SpringArmComp->bEnableCameraRotationLag = false;
-		SpringArmComp->TargetArmLength = 250.f; // Bring camera a bit closer
 	}
 	else {
 		// Reset all the spring arm component values that are altered when aiming
 		SpringArmComp->SocketOffset = FVector::ZeroVector;
 		SpringArmComp->bEnableCameraLag = true;
 		SpringArmComp->bEnableCameraRotationLag = true;
-		SpringArmComp->TargetArmLength = 300.f;
+	}
+
+	if (OverlappedWeaponPickup != NULL) {
+		UKismetSystemLibrary::PrintString(this, UKismetSystemLibrary::GetDisplayName(OverlappedWeaponPickup), true, false, FColor::Green, 0.f);
 	}
 
 }
@@ -127,6 +145,8 @@ void ASCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 
 	PlayerInputComponent->BindAction("Aim", IE_Pressed, this, &ASCharacter::AimStart);
 	PlayerInputComponent->BindAction("Aim", IE_Released, this, &ASCharacter::AimEnd);
+
+	PlayerInputComponent->BindAction("Interact", IE_Pressed, this, &ASCharacter::Interact);
 
 	// Camera input
 	PlayerInputComponent->BindAxis("CameraX", this, &ASCharacter::CameraX);
@@ -235,16 +255,45 @@ void ASCharacter::AimStart()
 {
 	bIsAiming = true;
 
+	bUseControllerRotationYaw = true; // Allow character to rotate in place
+
 }
 
 void ASCharacter::AimEnd()
 {
 	bIsAiming = false;
 
+	bUseControllerRotationYaw = false; // When stop aiming, character is not allowed to rotate in place
+
+}
+
+/* This function is only called when the character overlaps with any actor that has collision component */
+void ASCharacter::Interact()
+{
+	Interaction_PrimaryWeapon();
+
+}
+
+void ASCharacter::OnStartOverlappingActors(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult & SweepResult)
+{
+	if (OtherActor != NULL && OtherActor != this && OtherActor->GetClass()->IsChildOf(ASWeaponPickup::StaticClass())) {
+		OverlappedWeaponPickup = Cast<ASWeaponPickup>(OtherActor);
+	}
+
+}
+
+void ASCharacter::OnEndOverlappingActors(UPrimitiveComponent * OverlappedComponent, AActor * OtherActor, UPrimitiveComponent * OtherComp, int32 OtherBodyIndex)
+{
+	if (OtherActor != NULL && OtherActor != this) {
+		OverlappedWeaponPickup = NULL;
+	}
+
 }
 
 void ASCharacter::CameraX(float Value)
 {
+	TurnX = Value;
+
 	AddControllerYawInput(Value); // Control camera component horizontally
 
 }
@@ -271,5 +320,78 @@ void ASCharacter::CalculateCharacterMovementDirection(float InputX, float InputY
 
 	// Assign the direction using the yaw value of the direction rotation
 	MovementDirection = DirectionRotation.Yaw;
+
+}
+
+void ASCharacter::Interaction_PrimaryWeapon()
+{
+	// Holds the weapon that this character las posessed - if valid (character had picked up and possessed one)
+	ASWeapon* LastPossessedWeapon = NULL;
+
+	// Holds the weapon pickup ref that the character last overlapped
+	ASWeaponPickup * LastWeaponPickupOverlapped = NULL;
+
+	// Drop location of the dropped weapon
+	FVector DropLocation;
+
+	FHitResult TraceHit;
+	FCollisionQueryParams TraceInfos;
+	TraceInfos.bTraceComplex = true;
+	TraceInfos.AddIgnoredActor(this);
+
+	GetWorld()->LineTraceSingleByChannel(TraceHit, GetActorLocation(), GetActorLocation() + GetActorForwardVector() * 80.f, ECC_WorldStatic, TraceInfos);
+
+	if (TraceHit.bBlockingHit) {
+		DropLocation = TraceHit.ImpactPoint + (TraceHit.ImpactNormal * 5.f) + FVector(0.f, 20.f, 80.f);
+	}
+	else {
+		DropLocation = TraceHit.TraceEnd + FVector(0.f, 20.f, 80.f);
+	}
+
+	// Spawn informations and parameters
+	FActorSpawnParameters SpawnInfos;
+	SpawnInfos.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn; // Always spawn, but ignore collision
+
+	if (OverlappedWeaponPickup != NULL) {
+		LastWeaponPickupOverlapped = OverlappedWeaponPickup; // Assign ref using the last overlapped weapon pickup
+
+		if (PrimaryWeapon != NULL) {
+			LastPossessedWeapon = Cast<ASWeapon>(PrimaryWeapon); // Assign ref using the last possess primary weapon - if valid
+
+			PrimaryWeapon->Destroy(); // Destroy the last primary weapon on character holding socket - to drop it
+
+			// Spawn the new primary weapon from weapon class of the overlapped weapon pickup
+			PrimaryWeapon = GetWorld()->SpawnActor<ASRifleWeapon>(OverlappedWeaponPickup->PendingPickupWeaponClass, GetMesh()->GetSocketTransform(PrimaryHolsterSocketName), SpawnInfos);
+
+			// Attach the new primary weapon to the character holster socket
+			PrimaryWeapon->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, PrimaryHolsterSocketName);
+
+			if (LastPossessedWeapon->WeaponPickupClass != NULL) {
+				// Spawn the pickup actor of the last possessed weapon
+				ASWeaponPickup* WeaponPickup = GetWorld()->SpawnActor<ASWeaponPickup>(LastPossessedWeapon->WeaponPickupClass, DropLocation, FRotator::ZeroRotator, SpawnInfos);
+
+				if (WeaponPickup != NULL) {
+					UStaticMeshComponent* WeaponPickupMeshComp = WeaponPickup->GetMeshComponent(); // Access the mesh the pickup actor of the last weapon
+
+					if (WeaponPickupMeshComp != NULL) {
+						WeaponPickupMeshComp->AddTorqueInRadians(FVector(1.f) * 4000.f); // Flip when dropped using torque force
+					}
+				}
+			}
+
+			LastWeaponPickupOverlapped->Destroy(); // Destroy the last overlapped weapon pickup, as the character chose to pickup the new weapon
+		}
+		else { // When character has no primary weapon in possession
+			if (OverlappedWeaponPickup->PendingPickupWeaponClass != NULL) {
+				// Spawn primary weapon using weapon class from overlapped weapon pickup
+				PrimaryWeapon = GetWorld()->SpawnActor<ASRifleWeapon>(OverlappedWeaponPickup->PendingPickupWeaponClass, GetMesh()->GetSocketTransform(PrimaryHolsterSocketName), SpawnInfos);
+
+				// Attach the spawned primary weapon to holster socket
+				PrimaryWeapon->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, PrimaryHolsterSocketName);
+
+				OverlappedWeaponPickup->Destroy(); // Destroy the overlapped weapon pickup, as the character chose to pickup weapon
+			}
+		}
+	}
 
 }
